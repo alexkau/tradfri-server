@@ -5,12 +5,14 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from subprocess import call
-from tradfri import tradfriActions
+from pytradfri import Gateway
+from pytradfri.api.libcoap_api import api_factory
 import configparser
 import sys
 
 class RequestHandler(BaseHTTPRequestHandler):
     key = None
+    hubip = None
 
     BAD_REQUEST = -1
     SUCCESS = 0
@@ -20,17 +22,31 @@ class RequestHandler(BaseHTTPRequestHandler):
     COLOR = 'color'
     SWITCH = 'switch'
     BRIGHTNESS = 'brightness'
+
+    COLOR_TO_HEX_MAP = {
+        'warm': 'efd275',
+        'orange': 'efd275',
+        'red': 'efd275',
+
+        'normal': 'f1e0b5',
+        'yellow': 'f1e0b5',
+
+        'cool': 'f5faf6',
+        'cold': 'f5faf6',
+        'white': 'f5faf6',
+        'blue': 'f5faf6'
+    }
     COMMAND_PART_TYPE_TO_VALUES = {
-        COLOR: ['warm', 'normal', 'cold'],
+        COLOR: list(COLOR_TO_HEX_MAP.keys()),
         SWITCH: ['on', 'off'],
-        BRIGHTNESS: []
+        BRIGHTNESS: list(str(i) for i in range(101))
     }
 
     ZONES = ['living', 'bathroom', 'bedroom']
     ZONE_ALIAS_MAP = {
-        'living': 164818,
-        'bedroom': 152118,
-        'bathroom': 189890
+        'living': 'Living Room',
+        'bedroom': 'Bedroom',
+        'bathroom': 'Bathroom'
     }
     # ?[zone] [on|off]
     # ?[zone] [color]
@@ -45,23 +61,29 @@ class RequestHandler(BaseHTTPRequestHandler):
         [BRIGHTNESS, COLOR]
     ]
 
-    hubip = None
-    securityid = None
-
     # def __init__(self, request, client_address, server):
     #     BaseHTTPRequestHandler.__init__(self, request, client_address, server)
     #     # print("hub" + str(self.hubip))
 
-
-    def _parse_request(self):
-        # print("hub2" + self.hubip)
+    def init(self):
         if self.hubip is None:
             conf = configparser.ConfigParser()
             conf.read('tradfri.cfg')
 
             self.hubip = conf.get('tradfri', 'hubip')
             self.securityid = conf.get('tradfri', 'securityid')
+            self.api = api_factory(self.hubip, self.securityid)
+            self.gateway = Gateway()
 
+            groups_command = self.gateway.get_groups()
+            groups_commands = self.api(groups_command)
+            groups = self.api(*groups_commands)
+            self.groups = dict((g.name, g) for g in groups)
+            print(str(self.groups))
+
+    def _parse_request(self):
+        # print("hub2" + self.hubip)
+        self.init()
 
         parsed_req = urlparse(self.path)
         args = parse_qs(parsed_req.query)
@@ -78,7 +100,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             part_type = format[i]
             part = cmd[i]
             for acceptable_value in self.COMMAND_PART_TYPE_TO_VALUES[part_type]:
-                if part == acceptable_value:
+                if part.lower() == acceptable_value.lower():
                     break
             else:
                 # print("invalid: " + str(cmd) + " against " + str(format))
@@ -97,21 +119,29 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         for i in range(len(format)):
             part_type = format[i]
-            part = cmd[i]
+            part = cmd[i].lower()
             for zone in zones:
                 zone_id = self.ZONE_ALIAS_MAP[zone]
                 if part_type == self.SWITCH:
-                    print('performing now')
-                    print('hub ip is ' + str(type(self.hubip)))
-                    print('key is ' + str(type(self.securityid)))
-                    print('zone id is ' + str(type(zone_id)))
-                    print('part is ' + str(type(part)))
-                    print(tradfriActions.tradfri_power_group('192.168.1.53', 'IyP8N5zrhIGQgbqm', 164818, 'on'))
-                    print('done')
+                    # print('performing now')
+                    # print('hub ip is ' + str(type(self.hubip)))
+                    # print('key is ' + str(type(self.securityid)))
+                    # print('zone id is ' + str(type(zone_id)))
+                    # print('part is ' + str(type(part)))
+                    self.api(self.groups[zone_id].set_state(1 if part == 'on' else 0))
+                    # print('done')
                 elif part_type == self.COLOR:
-                    tradfriActions.tradfri_color_group(self.hubip, self.securityid, zone_id, part)
+                    # need to do it per light...
+                    for devcmd in self.groups[zone_id].members():
+                        dev = self.api(devcmd)
+                        print(str(dev))
+                        if not dev.has_light_control:
+                            continue
+                        self.api(dev.light_control.set_hex_color(self.COLOR_TO_HEX_MAP[part]))
+                    # self.groups[zone_id].set_hex_color(self.COLOR_TO_HEX_MAP[part])
                 elif part_type == self.BRIGHTNESS:
-                    tradfriActions.tradfri_dim_group(self.hubip, self.securityid, zone_id, part)
+                    rawval = int(float(part) * 2.55)
+                    self.api(self.groups[zone_id].set_dimmer(rawval))
 
         return self.SUCCESS
 
