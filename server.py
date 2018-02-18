@@ -10,6 +10,13 @@ from pytradfri.api.libcoap_api import api_factory
 import configparser
 import sys
 
+def add_zone(zones, inverted, new_zone):
+    if inverted:
+        zones.remove(new_zone)
+    else:
+        zones.append(new_zone)
+    return zones
+
 class RequestHandler(BaseHTTPRequestHandler):
     key = None
     hubip = None
@@ -23,6 +30,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     SWITCH = 'switch'
     BRIGHTNESS = 'brightness'
 
+    # these values are the specific ones that the white spectrum tradfri bulbs use
+    # they should not be changed, since the bulbs physically can't display other colors
+    # i haven't tested the full-spectrum bulbs, but they should presumably support any color
     COLOR_TO_HEX_MAP = {
         'warm': 'efd275',
         'orange': 'efd275',
@@ -71,6 +81,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if self.hubip is None:
             conf = configparser.ConfigParser()
             conf.read('tradfri.cfg')
+            #print(conf)
 
             self.hubip = conf.get('tradfri', 'hubip')
             self.securityid = conf.get('tradfri', 'securityid')
@@ -84,7 +95,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             print(str(self.groups))
 
     def _parse_request(self):
-        # print("hub2" + self.hubip)
+        #print("hub2" + self.hubip)
         self.init()
 
         parsed_req = urlparse(self.path)
@@ -110,13 +121,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         print("valid: " + str(cmd) + " against " + str(format))
         return True
 
-    def run_command(self, zone_, cmd, format):
+    def run_command(self, zones, cmd, format):
         print("cmd:" + str(cmd))
         print("format:" + str(format))
 
-        zones = list(self.ZONES)
-        if zone_ is not None:
-            zones = [zone_]
+        # zones = list(self.ZONES)
+        # if zone_ is not None:
+        #     zones = [zone_]
         print("zones: " + str(zones))
 
         for i in range(len(format)):
@@ -152,21 +163,36 @@ class RequestHandler(BaseHTTPRequestHandler):
     def process(self, input):
         command = input.split(' ')
         # print(str(command))
-        zone = None
+        zones = []
+        inverted = False
+
         if len(command) == 0:
             return self.BAD_REQUEST
-        if len(command) >= 3 and command[0] + ' ' + command[1] in self.ZONES: # hacky support for two-word zone names
-            zone = command[0] + ' ' + command[1]
-            command = command[2:]
-        if command[0] in self.ZONES:
-            zone = command[0]
+
+        if command[0] == 'except': # magic "invert" keyword
+            zones = list(self.ZONES)
+            inverted = True
             command = command[1:]
+
+        if len(command) >= 3 and command[0] + ' ' + command[1] in self.ZONES: # hacky support for two-word zone names
+            #zones.append(command[0] + ' ' + command[1])
+            add_zone(zones, inverted, command[0] + ' ' + command[1])
+            command = command[2:]
+
+        if command[0] in self.ZONES:
+            #zones.append(command[0])
+            add_zone(zones, inverted, command[0])
+            command = command[1:]
+
         if len(command) == 0:
             return self.BAD_REQUEST
         
+        if len(zones) == 0:
+            zones = list(self.ZONES)
+
         for format in self.FORMATS:
             if len(format) == len(command) and self.isvalid(command, format):
-                return self.run_command(zone, command, format)
+                return self.run_command(zones, command, format)
         return self.BAD_REQUEST
 
     # def do_POST(self):
