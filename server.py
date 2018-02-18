@@ -42,11 +42,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         BRIGHTNESS: list(str(i) for i in range(101))
     }
 
-    ZONES = ['living', 'bathroom', 'bedroom']
+    ZONES = ['living', 'living room', 'bathroom', 'bedroom', 'office']
     ZONE_ALIAS_MAP = {
+        'living room': 'Living Room',
         'living': 'Living Room',
         'bedroom': 'Bedroom',
-        'bathroom': 'Bathroom'
+        'bathroom': 'Bathroom',
+        'office': 'Office'
     }
     # ?[zone] [on|off]
     # ?[zone] [color]
@@ -103,9 +105,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if part.lower() == acceptable_value.lower():
                     break
             else:
-                # print("invalid: " + str(cmd) + " against " + str(format))
+                print("invalid: " + str(cmd) + " against " + str(format))
                 return False
-        # print("valid: " + str(cmd) + " against " + str(format))
+        print("valid: " + str(cmd) + " against " + str(format))
         return True
 
     def run_command(self, zone_, cmd, format):
@@ -142,6 +144,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 elif part_type == self.BRIGHTNESS:
                     rawval = int(float(part) * 2.55)
                     self.api(self.groups[zone_id].set_dimmer(rawval))
+                    if rawval > 0:
+                        self.api(self.groups[zone_id].set_state(1))
 
         return self.SUCCESS
 
@@ -151,6 +155,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         zone = None
         if len(command) == 0:
             return self.BAD_REQUEST
+        if len(command) >= 3 and command[0] + ' ' + command[1] in self.ZONES: # hacky support for two-word zone names
+            zone = command[0] + ' ' + command[1]
+            command = command[2:]
         if command[0] in self.ZONES:
             zone = command[0]
             command = command[1:]
