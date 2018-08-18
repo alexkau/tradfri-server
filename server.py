@@ -7,15 +7,9 @@ from urllib.parse import urlparse, parse_qs
 from subprocess import call
 from pytradfri import Gateway
 from pytradfri.api.libcoap_api import api_factory
+from time import sleep
 import configparser
 import sys
-
-def add_zone(zones, inverted, new_zone):
-    if inverted:
-        zones.remove(new_zone)
-    else:
-        zones.append(new_zone)
-    return zones
 
 class RequestHandler(BaseHTTPRequestHandler):
     key = None
@@ -94,6 +88,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.groups = dict((g.name, g) for g in groups)
             print(str(self.groups))
 
+    def add_zone(self, zone_ids, inverted, new_zone):
+        if inverted:
+            zone_ids.remove(self.ZONE_ALIAS_MAP[new_zone])
+        else:
+            zone_ids.add(self.ZONE_ALIAS_MAP[new_zone])
+        return zone_ids
+
     def _parse_request(self):
         #print("hub2" + self.hubip)
         self.init()
@@ -121,20 +122,23 @@ class RequestHandler(BaseHTTPRequestHandler):
         print("valid: " + str(cmd) + " against " + str(format))
         return True
 
-    def run_command(self, zones, cmd, format):
+    def run_command(self, zone_ids, cmd, format):
         print("cmd:" + str(cmd))
         print("format:" + str(format))
 
         # zones = list(self.ZONES)
         # if zone_ is not None:
         #     zones = [zone_]
-        print("zones: " + str(zones))
+        print("zone_ids: " + str(zone_ids))
 
         for i in range(len(format)):
             part_type = format[i]
             part = cmd[i].lower()
-            for zone in zones:
-                zone_id = self.ZONE_ALIAS_MAP[zone]
+            #zone_ids = set(self.ZONE_ALIAS_MAP[zone] for zone in zones)
+            #print("zone ids: " + str(zone_ids))
+            #for zone in zones:
+            for zone_id in zone_ids:
+                #zone_id = self.ZONE_ALIAS_MAP[zone]
                 if part_type == self.SWITCH:
                     # print('performing now')
                     # print('hub ip is ' + str(type(self.hubip)))
@@ -147,7 +151,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     # need to do it per light...
                     for devcmd in self.groups[zone_id].members():
                         dev = self.api(devcmd)
-                        print(str(dev))
+                        print(str(dev) + ": " + str(dev.has_light_control))
                         if not dev.has_light_control:
                             continue
                         self.api(dev.light_control.set_hex_color(self.COLOR_TO_HEX_MAP[part]))
@@ -157,42 +161,44 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.api(self.groups[zone_id].set_dimmer(rawval))
                     if rawval > 0:
                         self.api(self.groups[zone_id].set_state(1))
+                        #sleep(0.2)
+                #sleep(0.2)
 
         return self.SUCCESS
 
     def process(self, input):
-        command = input.split(' ')
+        command = input.lower().split(' ')
         # print(str(command))
-        zones = []
+        zone_ids = set()
         inverted = False
 
         if len(command) == 0:
             return self.BAD_REQUEST
 
         if command[0] == 'except': # magic "invert" keyword
-            zones = list(self.ZONES)
+            zone_ids = set(self.ZONE_ALIAS_MAP.values())
             inverted = True
             command = command[1:]
 
         if len(command) >= 3 and command[0] + ' ' + command[1] in self.ZONES: # hacky support for two-word zone names
             #zones.append(command[0] + ' ' + command[1])
-            add_zone(zones, inverted, command[0] + ' ' + command[1])
+            self.add_zone(zone_ids, inverted, command[0] + ' ' + command[1])
             command = command[2:]
 
         if command[0] in self.ZONES:
             #zones.append(command[0])
-            add_zone(zones, inverted, command[0])
+            self.add_zone(zone_ids, inverted, command[0])
             command = command[1:]
 
         if len(command) == 0:
             return self.BAD_REQUEST
         
-        if len(zones) == 0:
-            zones = list(self.ZONES)
+        if len(zone_ids) == 0:
+            zone_ids = set(self.ZONE_ALIAS_MAP.values())
 
         for format in self.FORMATS:
             if len(format) == len(command) and self.isvalid(command, format):
-                return self.run_command(zones, command, format)
+                return self.run_command(zone_ids, command, format)
         return self.BAD_REQUEST
 
     # def do_POST(self):
